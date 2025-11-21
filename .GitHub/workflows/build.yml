@@ -1,0 +1,260 @@
+name: Build Python Libraries and Code-Server for ARMv7l
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CODE_SERVER_VERSION: "4.23.1"
+  NODE_VERSION: "20.11.0"
+
+jobs:
+  build-python-wheels-armv7:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Python wheels for ARMv7l
+        run: |
+          docker run --rm --privileged \
+            -v ${{ github.workspace }}:/workspace \
+            --platform linux/arm/v7 \
+            python:${{ matrix.python-version }}-slim-bullseye \
+            bash -c "
+              cd /workspace && \
+              apt-get update && \
+              apt-get install -y gcc g++ make libffi-dev libssl-dev && \
+              pip install --upgrade pip setuptools wheel && \
+              pip wheel --wheel-dir=/workspace/wheels \
+                numpy scipy pandas matplotlib \
+                requests flask django \
+                pillow cryptography \
+                pyyaml lxml beautifulsoup4 \
+                scikit-learn jupyter \
+                --no-deps || true && \
+              pip wheel --wheel-dir=/workspace/wheels \
+                numpy scipy pandas matplotlib \
+                requests flask django \
+                pillow cryptography \
+                pyyaml lxml beautifulsoup4 \
+                scikit-learn jupyter
+            "
+
+      - name: List built wheels
+        run: |
+          ls -lh wheels/
+          echo "Built wheels for Python ${{ matrix.python-version }}"
+
+      - name: Upload Python wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-${{ matrix.python-version }}-armv7l-wheels
+          path: wheels/*.whl
+          retention-days: 30
+
+  build-code-server-armv7:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build code-server for ARMv7l
+        run: |
+          mkdir -p code-server-build
+          docker run --rm --privileged \
+            -v ${{ github.workspace }}/code-server-build:/build \
+            --platform linux/arm/v7 \
+            node:${{ env.NODE_VERSION }}-bullseye \
+            bash -c "
+              cd /build && \
+              apt-get update && \
+              apt-get install -y git python3 make g++ pkg-config libx11-dev libxkbfile-dev libsecret-1-dev && \
+              git clone --depth 1 --branch v${{ env.CODE_SERVER_VERSION }} https://github.com/coder/code-server.git && \
+              cd code-server && \
+              npm install --legacy-peer-deps && \
+              npm run build && \
+              npm run release && \
+              npm run release:standalone && \
+              cd release-standalone && \
+              tar -czf code-server-${{ env.CODE_SERVER_VERSION }}-linux-armv7l.tar.gz * && \
+              mv code-server-${{ env.CODE_SERVER_VERSION }}-linux-armv7l.tar.gz /build/
+            "
+
+      - name: Verify code-server build
+        run: |
+          ls -lh code-server-build/
+          if [ -f code-server-build/code-server-${{ env.CODE_SERVER_VERSION }}-linux-armv7l.tar.gz ]; then
+            echo "✅ Code-server build successful!"
+            tar -tzf code-server-build/code-server-${{ env.CODE_SERVER_VERSION }}-linux-armv7l.tar.gz | head -20
+          else
+            echo "❌ Code-server build failed!"
+            exit 1
+          fi
+
+      - name: Upload code-server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-server-${{ env.CODE_SERVER_VERSION }}-armv7l
+          path: code-server-build/code-server-*.tar.gz
+          retention-days: 30
+
+  build-optimized-python-libs:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Build optimized ML libraries for ARMv7l
+        run: |
+          docker run --rm --privileged \
+            -v ${{ github.workspace }}:/workspace \
+            --platform linux/arm/v7 \
+            python:3.11-bullseye \
+            bash -c "
+              apt-get update && \
+              apt-get install -y \
+                build-essential gfortran \
+                libopenblas-dev liblapack-dev \
+                libatlas-base-dev \
+                pkg-config libhdf5-dev && \
+              pip install --upgrade pip setuptools wheel cython && \
+              
+              # Build numpy with OpenBLAS optimization
+              pip wheel --wheel-dir=/workspace/optimized-wheels \
+                numpy --no-binary numpy --no-deps && \
+              
+              # Build scipy with optimization
+              pip wheel --wheel-dir=/workspace/optimized-wheels \
+                scipy --no-binary scipy --no-deps && \
+              
+              # Build other ML libraries
+              pip wheel --wheel-dir=/workspace/optimized-wheels \
+                scikit-learn pandas matplotlib seaborn && \
+              
+              # Build common packages
+              pip wheel --wheel-dir=/workspace/optimized-wheels \
+                tensorflow-cpu torch torchvision || true
+            "
+
+      - name: Upload optimized wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimized-ml-armv7l-wheels
+          path: optimized-wheels/*.whl
+          retention-days: 30
+
+  create-release:
+    needs: [build-python-wheels-armv7, build-code-server-armv7, build-optimized-python-libs]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: |
+          ls -R artifacts/
+
+      - name: Create release directory
+        run: |
+          mkdir -p release
+          find artifacts -name "*.whl" -exec cp {} release/ ;
+          find artifacts -name "*.tar.gz" -exec cp {} release/ ;
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: armv7l-complete-release
+          path: release/
+          retention-days: 90
+
+  test-armv7-installation:
+    needs: [build-python-wheels-armv7, build-code-server-armv7]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Download Python wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: python-3.11-armv7l-wheels
+          path: wheels
+
+      - name: Download code-server
+        uses: actions/download-artifact@v4
+        with:
+          name: code-server-${{ env.CODE_SERVER_VERSION }}-armv7l
+          path: code-server
+
+      - name: Test Python wheels installation
+        run: |
+          docker run --rm --privileged \
+            -v ${{ github.workspace }}/wheels:/wheels \
+            --platform linux/arm/v7 \
+            python:3.11-slim-bullseye \
+            bash -c "
+              pip install /wheels/*.whl && \
+              python -c 'import numpy; print("NumPy version:", numpy.__version__)' && \
+              python -c 'import sys; print("Python version:", sys.version)' && \
+              python -c 'import platform; print("Architecture:", platform.machine())'
+            "
+
+      - name: Test code-server extraction
+        run: |
+          cd code-server
+          tar -tzf code-server-*.tar.gz | head -10
+          echo "✅ Code-server archive is valid"
