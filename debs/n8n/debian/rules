@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	# build n8n using npm
+	npm install
+	npm run build || true
+
+override_dh_auto_install:
+	mkdir -p debian/n8n/usr/lib/n8n
+	cp -r ./* debian/n8n/usr/lib/n8n/
+	mkdir -p debian/n8n/usr/bin
+	echo '#!/bin/sh' > debian/n8n/usr/bin/n8n
+	echo 'node /usr/lib/n8n/packages/cli/bin/n8n.js "$@"' >> debian/n8n/usr/bin/n8n
+	chmod +x debian/n8n/usr/bin/n8n
