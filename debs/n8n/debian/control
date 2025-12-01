@@ -1,0 +1,13 @@
+Source: n8n
+Section: web
+Priority: optional
+Maintainer: Your Name <you@example.com>
+Build-Depends: debhelper (>=9), nodejs, npm
+Standards-Version: 4.5.0
+Homepage: https://n8n.io
+
+Package: n8n
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nodejs (>= 12)
+Description: n8n workflow automation (packaged)
+ n8n is an extendable workflow automation tool.
