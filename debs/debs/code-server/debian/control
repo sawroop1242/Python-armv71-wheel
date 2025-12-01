@@ -1,0 +1,13 @@
+Source: code-server
+Section: web
+Priority: optional
+Maintainer: Your Name <you@example.com>
+Build-Depends: debhelper (>=9), nodejs, yarn
+Standards-Version: 4.5.0
+Homepage: https://github.com/cdr/code-server
+
+Package: code-server
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nodejs
+Description: code-server - VS Code in the browser packaged
+ code-server runs VS Code remotely and serves it over the web.
